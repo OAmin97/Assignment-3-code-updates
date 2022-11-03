@@ -1,0 +1,257 @@
+---
+title: "Assignment 2"
+author: "Omar Amin"
+date: "2022-10-28"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+  fig_width: 12
+fig_height: 24
+header-includes:
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r my-chunk, R.options = list(width = 40)}
+
+```
+
+
+# The geographic distribution and evolutionary diversification of the *phrynocephalus* genus
+
+In this assignment, I am doing point C, which is the geographic distribution and evolutionary diversification. I am using the same genus that I used in the first assignment which is the *Phrynocephalus*. They are a group of 33 species situated exclusively in the Qinghai-Tibetan plateau. These toad-headed species have been a focus of evolutionary studies due to their localization in the plateau, which helps in understanding the relationship between geography and speciation. My question today is to elucidate whether the biological evolutionary distances between the species in this group can be projected on the locations of the species in the plateau. One study that caught my interest (citation) is mentioning a hypothesis about the biogeographic clades of this groups and the location of the tectonic plates. They sequenced a region of the mitochondria genome (from 3’ end of *ND1* to 5’ end of *COI*) and they sequenced the *RAG-1* gene as well. 
+
+My goal here is to obtain these sequences of the study, build the phylogenetic trees of the two DNA sequences separately and then project the phylogenetic tree on the latitudes and longitudes of the *Phrynocephalus* species. I want to also check if one of the two sequences can predict the geographic diversification more than the other.
+
+
+**Part 1: Data discovery and manipulation**
+
+First of all, I obtained the sequences mitochondrial sequences from study (citation), their ids are from KJ195906-195944, so I wrote an sapply function to generate the Ids quickly
+
+```{r message=FALSE, warning=FALSE}
+library(phytools)
+library(mapdata)
+library(phytools)
+library(rentrez)
+library(magrittr)
+library(dplyr)
+library(measurements)
+library(stringi)
+library(ape)
+library(RSQLite)
+library(Biostrings)
+library(muscle)
+library(tidyr)
+library(DECIPHER)
+library(stringr)
+library(viridis)
+library(readr)
+
+phryo_mitoc_ids <- sapply(195906:195944, function(x) paste0("KJ", 
+                                                            as.character(x)) )
+
+head(phryo_mitoc_ids)
+length(phryo_mitoc_ids)
+```
+Now we have 39 Ids, the next step will be to fetch the fasta files of these Ids, save them in a variable and a file at the same time, then convert the sequences into a dnastringset object and convert it into a dataframe. I also extracted the speices names using regular expression from the sequences titles
+
+```{r}
+mitoc_fastas <- entrez_fetch(db = "nuccore", id = phryo_mitoc_ids, 
+                             rettype = "fasta") %T>% 
+  write("mitoc.fasta", sep = "\n")
+mitocstringSet <- readDNAStringSet("mitoc.fasta")
+mitoc_df <- data.frame(sequence_name = names(mitocstringSet), 
+                       mitoc_Sequence = paste(mitocstringSet)) %>%
+  mutate(species_name=str_match(sequence_name,
+                                                                                                 "(Phrynocephalus.+?)voucher")[,2])
+
+mitoc_df[1,]
+```
+
+The summary in the NCBI has the latitudes and longitudes of the sequences, and they are located in the description of the sequences, so I used REGEX and sapply to extract them
+
+```{r}
+phryo_mitoc_summ <- entrez_summary(db = "nuccore", id = phryo_mitoc_ids)
+mitoc_lat_lon <- as.data.frame(t(sapply(phryo_mitoc_summ, function(x) str_match(x$subname, "([0-9]+) deg ([0-9]*\\.?[0-9]*)' N,? ([0-9]+) deg ([0-9]*\\.?[0-9]*)' E|([0-9]*\\.?[0-9]*) N,? ([0-9]*\\.?[0-9]*) E"))))
+
+mitoc_lat_lon[1:4,]
+```
+As we see here, because the formatting of the lats and lons were all over the place between different entries, we have the numbers in the degree format and the normal decimal format, so I'll be using a package called measurements to change the degrees to the decimal format and keep the decimal as they are, then combining the columns together to create one singular lat and lon column
+
+```{r message=FALSE, warning=FALSE}
+mitoc_geos <- mitoc_lat_lon %>% 
+  unite("lat", V2:V3, remove = TRUE, sep = " ") %>% 
+  unite("lon", V4:V5, remove = TRUE, sep = " ")
+mitoc_geos$lat <- conv_unit(mitoc_geos$lat, from = 'deg_dec_min', 
+                            to = 'dec_deg')
+mitoc_geos$lon <- conv_unit(mitoc_geos$lon, from = 'deg_dec_min', 
+                            to = 'dec_deg')
+mitoc_geos_final <- mitoc_geos %>% 
+  unite("lat", c(lat, V6), remove = TRUE, na.rm = TRUE) %>%
+  unite("lon", c(lon, V7), remove = TRUE, na.rm = TRUE) %>% select(lat, lon)
+
+mitoc_geos_final[1:4, ]
+
+```
+Finally, combining the geopositions with the sequences and removing the sequences that we couldn't find the values for as it will not be benefical for our test, we are also adding here the NCBI accession number for later use in the phylogenetic formation
+
+```{r message=FALSE, warning=FALSE}
+mitoc_final <- cbind(identifier=paste0(sapply(phryo_mitoc_summ, function(x) x[["caption"]]),":",mitoc_df$species_name),mitoc_df, mitoc_geos_final) %>% filter(lat!="", lon!="")
+
+mitoc_final[1:4, ]
+```
+
+Do all the same steps mentioned above, but now with the RAG-1 gene, this time we will be using different ids for the RAG-1 genes
+
+```{r}
+phryo_RAG1_ids <- sapply(195945:195984, function(x) paste0("KJ", as.character(x)) )
+rag1_fastas <- entrez_fetch(db = "nuccore", id = phryo_RAG1_ids, rettype = "fasta") %T>% write("rag1.fasta", sep = "\n")
+rag1stringSet <- readDNAStringSet("rag1.fasta")
+rag1_df <- data.frame(sequence_name = names(rag1stringSet), rag1_Sequence = paste(rag1stringSet)) %>% mutate(species_name=str_match(sequence_name,"(Phrynocephalus.+?)voucher")[,2])
+phryo_rag1_summ <- entrez_summary(db = "nuccore", id = phryo_RAG1_ids)
+rag1_lat_lon <- as.data.frame(t(sapply(phryo_rag1_summ, function(x) str_match(x$subname, "(([0-9]+) deg ([0-9]*\\.?[0-9]*)' N,? ([0-9]+) deg ([0-9]*\\.?[0-9]*)' E)|(([0-9]*\\.?[0-9]*) N,? ([0-9]*\\.?[0-9]*) E)|(([0-9]*\\.[0-9]*\\.[0-9]*) N ([0-9]*\\.[0-9]*\\.[0-9]*) E)|([0-9]*) deg ([0-9]*)' N ([0-9]*) deg ([0-9]*)'"))))
+
+
+rag1_lat_lon[1:4, ]
+```
+
+
+We can see it is more messy than the mitochondrial region, we need to do more manipulation and filtering here here
+```{r message=FALSE, warning=FALSE}
+rag1_geos <- rag1_lat_lon %>% 
+  unite("lat", V3:V4, remove = TRUE, sep = " ") %>% 
+  unite("lon", V5:V6, remove = TRUE, sep = " ") %>%
+  unite("lat_1", V13:V14, remove = TRUE, sep = " ") %>%
+  unite("lon_1", V15:V16, remove = TRUE, sep = " ") %>% 
+  mutate(V11=gsub("\\."," ", V11), V12=gsub("\\."," ", V12)) %>% 
+  mutate(V11=conv_unit(V11, "deg_min_sec", "dec_deg"), 
+         V12 =conv_unit(V12, "deg_min_sec", "dec_deg"),
+         lat = conv_unit(lat, "deg_dec_min", "dec_deg"),
+         lon=conv_unit(lon, "deg_dec_min", "dec_deg"),
+         lat_1=conv_unit(lat_1, "deg_dec_min", "dec_deg"),
+         lon_1=conv_unit(lon_1, "deg_dec_min", "dec_deg"))
+
+rag1_geos_final <- rag1_geos %>% 
+  unite("lat", c(lat, V8, V11, lat_1), remove = TRUE, na.rm = TRUE) %>%
+  unite("lon", c(lon, V9, V12, lon_1), remove = TRUE, na.rm = TRUE) %>% 
+  select(lat, lon)
+
+rag1_final <- cbind(identifier=paste0(identifier=sapply(phryo_rag1_summ, function(x) x[["caption"]]),":",rag1_df$species_name), rag1_df, rag1_geos_final) %>% 
+  filter(lat!="", lon!="", is.na(species_name)==FALSE)
+
+rag1_final[1:4, ]
+
+```
+
+
+**Part 2: Alignment, clustering and tree formation**
+
+I checked these sequences manually, and found no Ns or any other characters other than the normal base pairs so they're  for processing, we will start here with the mitochondira sequences, I should mention that these codes were taken form the classes' scripts. we used here the TN93 model, which assumes distinct rates for both kinds of transition (A <-> G versus C <-> T)
+
+```{r message=FALSE, warning=FALSE, results=FALSE}
+mitoc_final$mitoc_Sequence <- DNAStringSet(mitoc_final$mitoc_Sequence)
+names(mitoc_final$mitoc_Sequence) <- mitoc_final$identifier
+mitoc_final_alignment <-DNAStringSet(muscle(mitoc_final$mitoc_Sequence))
+mitoc_bin <- as.DNAbin(mitoc_final_alignment)
+distanceMatrix.raw <- dist.dna(mitoc_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
+
+```
+
+
+```{r fig.width = 20, fig.height = 15}
+nj_mitoc_tn93 <- nj(distanceMatrix.raw)
+plot(nj_mitoc_tn93)
+```
+
+
+Doing the same steps but this time with the *RAG-1* gene
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+rag1_final$rag1_Sequence <- DNAStringSet(rag1_final$rag1_Sequence)
+names(rag1_final$rag1_Sequence) <- rag1_final$identifier
+rag1_final_alignment <-DNAStringSet(muscle(rag1_final$rag1_Sequence))
+rag1_bin <- as.DNAbin(rag1_final_alignment)
+distanceMatrix.raw <- dist.dna(rag1_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
+
+```
+
+
+```{r fig.width = 20, fig.height = 15}
+nj_rag1_tn93 <- nj(distanceMatrix.raw)
+plot(nj_rag1_tn93)
+```
+As these trees are neighbor-joining trees, we need to convert them to ultrametic trees to be able to produce a geophylogenetic tree
+
+```{r warning=FALSE, message=FALSE,  include=FALSE, fig.width = 20, fig.height = 15}
+mitoc_ultra <- force.ultrametric(nj_mitoc_tn93)
+rag1_ultra <- force.ultrametric(nj_rag1_tn93)
+```
+
+
+**Part 3: Geophylogeny analysis**
+
+
+Now to align these trees to a map using the lats and lons of the dataframes we created earlier on, we will start with the mitochondrial phylogenetic tree, the function "phylo.to.map" takes 2 main objects: a phylogenetic tree and a matrix consisting of the lats and lons (while its rownames cooresponds to the rownames of the tips of the tree). So, I generated a matrix from mitoc_final and rag1_final
+
+
+```{r}
+mitoc_coord <- select(mitoc_final, lat, lon)
+mitoc_coord$lat <- as.numeric(mitoc_coord$lat)
+mitoc_coord$lon <- as.numeric(mitoc_coord$lon)
+mitoc_coord <- as.matrix(mitoc_coord)
+rownames(mitoc_coord) <- mitoc_final$identifier
+
+
+rag1_coord <- select(rag1_final, lat, lon)
+rag1_coord$lat <- as.numeric(rag1_coord$lat)
+rag1_coord$lon <- as.numeric(rag1_coord$lon)
+rag1_coord <- as.matrix(rag1_coord)
+rownames(rag1_coord) <- rag1_final$identifier
+```
+
+
+I kept having an error while trying to generate a phylogram, I will try to look into it later but I had to change the type from "phylogram" to "direct", which draws the tree on the map itself.
+
+
+```{r fig.width = 25, fig.height = 15, error=FALSE, out.width = "6in", fig.cap ="The geophylogenetic tree of the \\textit{Phrynocephalus} genus, using the mitochondira sequences alignment"}
+
+
+mitoc_obj <- phylo.to.map(mitoc_ultra, mitoc_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards", asp=2)
+```
+
+
+```{r error=TRUE, results='hide', fig.show='hide'}
+
+
+rag1_obj <- phylo.to.map(rag1_ultra, rag1_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards")
+
+
+```
+
+This code above is also showing an error, I have been trying to fix it for days and checking if all my objects are in the right format and it is totally correct, as it is evident by the code that uses the mitochondrial alignment on line 226 which worked perfectly. I checked the phytools blog page ad found that some people are also having some inconsistent errors with the codes and some of them are addressed by the tool developer. I will try again later the check the source of the error but in the meanwhile I will try to discuss the first figure as it is the only output we have now.
+
+
+
+**Part 4: Discussion**
+
+We have only the figure that represents the mitochondrial sequences, but it is interesting nontheless. We can see in this figure that the phylogenetic tree resembles most observed relationship geographically. We can see these relationships as an example if we look at the southwest of the map, the *Phrynocephalus arabicus* and the *Phrynocephalus sp. JRM−2014a* are extremely close biologically and geographically. *Phrynocephalus luteoguttatus*, *Phrynocephalus ornatus*  and *Phrynocephalus clakurom* are all in the same clade and can also be found at a very close geographical distance in the middle-west of the map.
+
+A very interesting finding though is the far localization between *Phrynocephalus guttatus* found in northeast and *Phrynocephalus guttatus salenskyi* in the far north, although they share a single node, they are very far away geographically. That might be explained by the movement of tectonic plates in the extreme past that might led to the diversification of these species (Macey et al., 2018).
+
+**Part 5: Acknowledgement**
+
+My work and all my coding experience wouldn’t be possible without my first professor, Dr. Yasser Morsy, who has been very supportive of teaching me all his experience in coding and deducing information from data. I would also like to thank my colleagues for guiding me through the design of my ideas and the formulation of my mental process, I especially like to thank Nishita, Gibran, Thomas, Jesse, Segun and Amjad for giving me ideas and helping me practise my coding skills. and at the end, I am very happy to be a part of a program that has an amazing teaching assistant Jessica Castellanos and I am very thankful for her remarks on my first assignment as it tremendously helped me on this one, and Professor Dirk Steinke for helping me with any questions I have about the bold database and tips about R.
+
+**Part 6: References**
+
+Macey, J. R., Schulte, J. A. I., Ananjeva, N. B., Dyke, E. T. V., Wang, Y., Orlov, N., Shafiei, S., Robinson, M. D., Dujsebayeva, T., Freund, G. S., Fischer, C. M., Liu, D., & Papenfuss, T. J. (2018). A molecular phylogenetic hypothesis for the Asian agamid lizard genus Phrynocephalus reveals discrete biogeographic clades implicated by plate tectonics. Zootaxa, 4467(1), 1-81. https://doi.org/10.11646/zootaxa.4467.1.1 
+
