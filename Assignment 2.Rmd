@@ -1,12 +1,13 @@
 ---
 title: "Assignment 2"
 author: "Omar Amin"
+contributor: "Kasra Foroughi EDITS"
 date: "2022-10-28"
 output:
-  word_document: default
   html_document:
     df_print: paged
   pdf_document: default
+  word_document: default
   fig_width: 12
 fig_height: 24
 header-includes:
@@ -105,8 +106,29 @@ Finally, combining the geopositions with the sequences and removing the sequence
 
 ```{r message=FALSE, warning=FALSE}
 mitoc_final <- cbind(identifier=paste0(sapply(phryo_mitoc_summ, function(x) x[["caption"]]),":",mitoc_df$species_name),mitoc_df, mitoc_geos_final) %>% filter(lat!="", lon!="")
+#EDIT 1- KASRA - This edit was redone for the Rag1_Seq
+#In this edit, my aim was to filter the data in mitoc_final by removing sequences that have missing data (more than 1% N in the sequences)
+#Before the edit there are 35 variables for mitoc_final
+nrow(mitoc_final)
+missing.data <- 0.01
+ #Sequence length variability of 50 nucleotides
+length.var <- 50
+  #This section filters out the data
+  #It first creates a new column known as nucleotides2 which removes the terminal N's and gaps in each sequence
+  #It then filters out any sequences which have more than 1% missing data = dont want too many missing sequences
+  #It then filters out sequences which are outside the range of the median sequence length in accordance to length.var
+  df1 <-mitoc_final %>%
+    mutate(nucleotides2 = str_remove_all(mitoc_Sequence, "^N+|N+$|-")) %>%
+    filter(str_count(nucleotides2, "N") <= (missing.data * str_count(mitoc_Sequence))) %>%
+    filter(str_count(nucleotides2) >= median(str_count(nucleotides2)) - length.var & str_count(nucleotides2) <= median(str_count(nucleotides2)) + length.var)
+#Need to remove the previous mitoc_Sequence column and rename nucleotides2 as mitoc_Seq for alignment 
+df1_edit <- df1 %>%
+  select(-c('mitoc_Sequence'))
+colnames(df1_edit)[which(names(df1_edit) == "nucleotides2")] <- "mitoc_Sequence"
+#After the fucntion and edit - we can see that there are now 34 variables, meaning that 1 sequence was filtered due to exceeding the 1% threshold for missing data
+nrow(df1_edit)
+mitoc_final <- df1_edit
 
-mitoc_final[1:4, ]
 ```
 
 Do all the same steps mentioned above, but now with the RAG-1 gene, this time we will be using different ids for the RAG-1 genes
@@ -146,8 +168,28 @@ rag1_geos_final <- rag1_geos %>%
 
 rag1_final <- cbind(identifier=paste0(identifier=sapply(phryo_rag1_summ, function(x) x[["caption"]]),":",rag1_df$species_name), rag1_df, rag1_geos_final) %>% 
   filter(lat!="", lon!="", is.na(species_name)==FALSE)
+#EDIT 1.2- KASRA - 
+#In this edit, my aim was to filter the data in rag1_final by removing sequences that have missing data (more than 1% N in the sequences)
+#Before the edit there are 35 variables for rag1_final
+nrow(rag1_final)
+  #This section filters out the data
+  #It first creates a new column known as nucleotides2 which removes the terminal N's and gaps in each sequence
+  #It then filters out any sequences which have more than 1% missing data = dont want too many missing sequences
+  #It then filters out sequences which are outside the range of the median sequence length in accordance to length.var
+  df2 <-rag1_final %>%
+    mutate(nucleotides2 = str_remove_all(rag1_Sequence, "^N+|N+$|-")) %>%
+    filter(str_count(nucleotides2, "N") <= (missing.data * str_count(rag1_Sequence))) %>%
+    filter(str_count(nucleotides2) >= median(str_count(nucleotides2)) - length.var & str_count(nucleotides2) <= median(str_count(nucleotides2)) + length.var)
+  #Change the nucleotides2 format into DNAStringSet to be used by the Bioconductor class for alignment
+  #Assigning a unique Identifier for each of the sequences that have been converted
+  
+df2_edit <- df2 %>%
+    select(-c('rag1_Sequence'))
+colnames(df2_edit)[which(names(df2_edit) == "nucleotides2")] <- "rag1_Sequence"
+#After the filter - we can see that 2 sequences were filtered - meaning that 2 sequences exceeded the threshold of more than 1% missing data
+nrow(df2_edit)
+rag1_final <- df2_edit
 
-rag1_final[1:4, ]
 
 ```
 
@@ -161,14 +203,18 @@ mitoc_final$mitoc_Sequence <- DNAStringSet(mitoc_final$mitoc_Sequence)
 names(mitoc_final$mitoc_Sequence) <- mitoc_final$identifier
 mitoc_final_alignment <-DNAStringSet(muscle(mitoc_final$mitoc_Sequence))
 mitoc_bin <- as.DNAbin(mitoc_final_alignment)
-distanceMatrix.raw <- dist.dna(mitoc_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
 
+#KASRA EDIT (for Edit 3) - Part 3.1 - DistanceMatrix_Mito
+#The purpose of this second edit was to create a cluster of the mitoc and rag1 genes 
+#Needed to transform the mitoc_bin as a dist.dna for hclustering 
+distanceMatrix.raw_MITO <- dist.dna(mitoc_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
 ```
 
 
 ```{r fig.width = 20, fig.height = 15}
-nj_mitoc_tn93 <- nj(distanceMatrix.raw)
-plot(nj_mitoc_tn93)
+#Don't need to plot the distance matrix if clustering anymore 
+# nj_mitoc_tn93 <- nj(distanceMatrix.raw_MITO)
+# plot(nj_mitoc_tn93)
 ```
 
 
@@ -180,25 +226,85 @@ rag1_final$rag1_Sequence <- DNAStringSet(rag1_final$rag1_Sequence)
 names(rag1_final$rag1_Sequence) <- rag1_final$identifier
 rag1_final_alignment <-DNAStringSet(muscle(rag1_final$rag1_Sequence))
 rag1_bin <- as.DNAbin(rag1_final_alignment)
-distanceMatrix.raw <- dist.dna(rag1_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
+
+#KASRA EDIT (for Edit 3) - Part 3.2 - DistanceMatrix_Rag1
+#The purpose of this second edit was to create a cluster of the mitoc and rag1 genes 
+#Needed to transform the mitoc_bin as a dist.dna for hclustering 
+distanceMatrix.raw_Rag1 <- dist.dna(rag1_bin, model = "TN93", as.matrix = TRUE, pairwise.deletion = TRUE)
 
 ```
 
 
 ```{r fig.width = 20, fig.height = 15}
-nj_rag1_tn93 <- nj(distanceMatrix.raw)
-plot(nj_rag1_tn93)
+#Dont need a plot for distanceMatrix 
+# nj_rag1_tn93 <- nj(distanceMatrix.raw_Rag1)
+# plot(nj_rag1_tn93)
 ```
 As these trees are neighbor-joining trees, we need to convert them to ultrametic trees to be able to produce a geophylogenetic tree
 
 ```{r warning=FALSE, message=FALSE,  include=FALSE, fig.width = 20, fig.height = 15}
-mitoc_ultra <- force.ultrametric(nj_mitoc_tn93)
-rag1_ultra <- force.ultrametric(nj_rag1_tn93)
+# mitoc_ultra <- force.ultrametric(nj_mitoc_tn93)
+# rag1_ultra <- force.ultrametric(nj_rag1_tn93)
+```
+
+**KASRA EDIT 2 & 3- Clustering the MITO and RAG1 Genes
+```{r}
+#Edit 2 - In this section, I am trying to figure out what the best clustering method is before the final cluster of mitoc and rag1 genes
+
+#Find the best clustering method for the data
+m <- c( "average", "single", "complete", "ward")
+names(m) <- c( "average", "single", "complete", "ward")
+
+#install.packages("factoextra")
+library(factoextra)
+library(cluster)
+
+#This function uses agnes() which is similar to hclust, but also returns a coefficient (AC) that measures the strength of the respective clustering methods
+#COI AC - determine which clustering method is highest for either 
+ac_Mito <- function(x) {
+  agnes(distanceMatrix.raw_MITO, method = x)$ac
+}
+ac_Mito_values <- purrr::map_dbl(m, ac_Mito) 
+
+#CYTB AC
+ac_Rag1 <- function(x) {
+  agnes(distanceMatrix.raw_Rag1, method = x)$ac
+}
+ac_Rag1_values<- purrr::map_dbl(m, ac_Rag1) 
+
+#The best method of clustering for both genes is Ward
+which.max(ac_Mito_values)
+which.max(ac_Rag1_values)
+
+#Edit 3 - This edit is to add a hierarchical clustering method for mitoc and rag1 genes 
+# I have first figured out that the wWard clustering method is the best for both genes
+
+distanceMatrix.raw_MITO = as.dist(distanceMatrix.raw_MITO)
+distanceMatrix.raw_Rag1 = as.dist(distanceMatrix.raw_Rag1)
+
+clustering.method <- "ward.D2"
+Mito_Cluster <-hclust(distanceMatrix.raw_MITO,method=clustering.method)
+#Plot the COI cluster 
+plot(Mito_Cluster, main =  "MITO Cluster", xlab = "Species")
+#Clustering CYTB
+Rag1_Cluster <-hclust(distanceMatrix.raw_Rag1,method=clustering.method)
+#Plot the CYTB Cluster
+plot(Rag1_Cluster, main = "Rag1 Cluster", xlab = "Species")
+
+#EDIT 3 - Determining which gene had a stronger clustering through silhouette index 
+hc_cut_MITO <- hcut(distanceMatrix.raw_MITO, k = 3, hc_method = "ward.D2")
+# Visualize silhouhette information
+fviz_silhouette(hc_cut_MITO, main = "MITO Silhouette")
+#Rag 1 has a much higer width and average values - which signifies that it is the better gene for clustering 
+hc_cut_Rag1 <- hcut(distanceMatrix.raw_Rag1, k = 3, hc_method = "ward.D2")
+# Visualize silhouhette information
+fviz_silhouette(hc_cut_Rag1, main = "Rag1 Silhouette")
 ```
 
 
-**Part 3: Geophylogeny analysis**
 
+**Part 3: Geophylogeny analysis**
+Kasra Edit - This section has been commented out as it presented problems originally and I was not able to fix it 
 
 Now to align these trees to a map using the lats and lons of the dataframes we created earlier on, we will start with the mitochondrial phylogenetic tree, the function "phylo.to.map" takes 2 main objects: a phylogenetic tree and a matrix consisting of the lats and lons (while its rownames cooresponds to the rownames of the tips of the tree). So, I generated a matrix from mitoc_final and rag1_final
 
@@ -225,14 +331,13 @@ I kept having an error while trying to generate a phylogram, I will try to look 
 ```{r fig.width = 25, fig.height = 15, error=FALSE, out.width = "6in", fig.cap ="The geophylogenetic tree of the \\textit{Phrynocephalus} genus, using the mitochondira sequences alignment"}
 
 
-mitoc_obj <- phylo.to.map(mitoc_ultra, mitoc_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards", asp=2)
+#mitoc_obj <- phylo.to.map(mitoc_ultra, mitoc_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards", asp=2)
 ```
 
 
 ```{r error=TRUE, results='hide', fig.show='hide'}
 
-
-rag1_obj <- phylo.to.map(rag1_ultra, rag1_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards")
+#rag1_obj <- phylo.to.map(rag1_ultra, rag1_coord,type="direct", ylim=c(18,50), xlim=c(38, 130), plot=TRUE, direction="downwards")
 
 
 ```
